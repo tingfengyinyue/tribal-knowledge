@@ -115,11 +115,22 @@ A materialized view aggregates, per note, how many distinct users confirmed it a
 
 1. **Parse** the question with rules: recognize entities by name and alias, environment, time window, identifiers (trace IDs, order IDs), error codes.
 2. **Recall** notes through three routes in parallel: tag match, vector similarity, full-text.
-3. **Score**: `score = (0.45 · tag + 0.35 · vector + 0.20 · text) × trust × penalty`, where `penalty` down-weights notes from a domain the question isn't about.
+3. **Score**: `score = (0.45 · tag + 0.35 · vector + 0.20 · text) × trust × penalty`, where `penalty` down-weights notes from a domain the question isn't about, and notes that are stale (see below).
 4. **Map**: expand from recognized entities to their resources (for the requested environment) and immediate neighbors.
 5. **Instructions** are selected by condition, not ranked.
 
 Only summaries are returned at first; the agent reads full notes on demand. This keeps the first response small and fast.
+
+### Freshness
+
+Knowledge about running systems decays quietly: a log store gets renamed, a database moves, an API changes. A note confirmed last week and one nobody has touched in a year should not look the same.
+
+- Every note has a **last verified** date: when it was last confirmed in a session with real evidence. Imported notes start from the date recorded in their source; otherwise the last update time is used.
+- Notes not verified for **90 days** are returned with `stale: true` and a score penalty (×0.8). Instructions tell the agent to treat them as leads and check before relying on them.
+- When a note is rated **helpful** in a session that has evidence steps, its last-verified date is refreshed. Ratings in sessions without evidence don't count.
+- Refreshing only touches the verification date, not `updated_at`, so it never conflicts with someone editing the note.
+
+This is deliberately lighter than full bi-temporal modeling (see [open questions](#12-open-questions)): it answers "can I still trust this?", which is the question agents actually need answered.
 
 ## 6. Writing knowledge back
 
@@ -195,6 +206,9 @@ Past cases are great leads and terrible proof. If they're allowed to justify wri
 **Generic aliases poison recognition.**
 Aliases like `scheduler` or `gateway` matched unrelated questions. Names and aliases must be specific; generic words are rejected.
 
+**Keep the metadata when importing.**
+The original per-person notes recorded when a fact became true, when it was observed and which note superseded which. A first import kept the text and dropped most of that, and even treated "partially superseded" as "invalid", silently hiding a still-useful note. Time and provenance fields are part of the knowledge, not decoration.
+
 **Ask the user once, or not at all.**
 Early versions asked the user to confirm every update. Nobody enjoys that, and most people just said yes. Replacing the human confirmation with an evidence check gave better data and a better experience.
 
@@ -203,7 +217,7 @@ Shipping helper scripts to every machine looked attractive, but the rules they e
 
 ## 12. Open questions
 
-- **Temporal validity**: should overwritten facts keep a validity window (as in temporal knowledge graphs) so you can ask what was believed at a given time, instead of relying on session-level revert?
+- **Bi-temporal history**: should overwritten facts keep a validity window (when it became true / stopped being true) alongside the record time, as in temporal knowledge graphs, so you can ask what was believed at a given time? Freshness (§5) covers the everyday need; full history may be worth it once audits ("what did we know when we decided this?") become common.
 - **Authentication**: personal tokens per user, so trust and feedback are attributed correctly.
 - **Retention**: how long to keep raw questions and steps, and what to keep after that.
 - **Evaluation**: measuring whether the skill actually gets better — repeat-question time, recall hit rate, share of writes rejected by the gate.

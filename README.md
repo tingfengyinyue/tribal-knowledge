@@ -87,6 +87,7 @@ We learned this the hard way: an agent without permission to read the logs "solv
 - **Question types**: troubleshooting, data lookup and how-to questions follow different flows and output templates.
 - **Auto-registering repositories**: the agent reports the current directory's git remote; if the repository isn't on the map yet, it analyzes it and registers it.
 - **Self-updating bootstrap**: the server reports the bootstrap version; outdated clients refresh themselves.
+- **Freshness**: every note carries the date it was last confirmed. Notes not confirmed for 90 days are flagged `stale`, ranked lower, and treated as leads to verify. A note marked helpful in a session with real evidence gets its date refreshed automatically.
 - **Revert by session**: every change records before/after, so a whole session's writes can be undone.
 - **Redaction and injection checks** before anything enters shared knowledge.
 
