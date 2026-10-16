@@ -1,0 +1,209 @@
+# Design
+
+This document describes the design of a *shared, evidence-gated skill*: one skill that a whole team's agents use, that grows with every session, and that only accepts facts backed by evidence from the session that produced them.
+
+Examples use a fictional e-commerce team (`checkout`, `orders`, `wallet` services). The pattern is domain-independent: operations, customer support, data analysis or internal tooling all fit.
+
+- [1. Goals and non-goals](#1-goals-and-non-goals)
+- [2. Architecture](#2-architecture)
+- [3. Knowledge model](#3-knowledge-model)
+- [4. Session lifecycle](#4-session-lifecycle)
+- [5. Retrieval](#5-retrieval)
+- [6. Writing knowledge back](#6-writing-knowledge-back)
+- [7. Question types](#7-question-types)
+- [8. Repository auto-registration](#8-repository-auto-registration)
+- [9. Bootstrap and self-update](#9-bootstrap-and-self-update)
+- [10. Safety](#10-safety)
+- [11. Lessons learned](#lessons-learned)
+- [12. Open questions](#12-open-questions)
+
+---
+
+## 1. Goals and non-goals
+
+**Goals**
+
+- One body of knowledge for the whole team, not one per person.
+- Knowledge improves as a side effect of normal use — nobody has to "go update the docs".
+- Users keep their own credentials and run their own tools. The server never needs access to production systems.
+- Shared knowledge stays trustworthy: a confident-sounding agent cannot pollute it.
+- Minimal user interaction: no review queues, no approval steps, no "should I save this?" prompts.
+
+**Non-goals**
+
+- The server does not call a general-purpose LLM. All generation (understanding the question, planning, writing conclusions and reflections) is done by the user's agent. The server only does deterministic work plus embeddings.
+- No versioning or approval workflow. Every change is recorded and can be reverted instead.
+- No code distribution. The agent composes its own tool calls from the instructions and notes; the skill does not ship scripts that run on users' machines.
+
+## 2. Architecture
+
+```
+ User's machine                                   Skill server
+┌──────────────────────────────┐   MCP / HTTP   ┌───────────────────────────────────┐
+│ Agent (e.g. a coding agent)  │ ─────────────▶ │ Session service                   │
+│  + bootstrap skill (thin)    │                │  - parse question, recognize      │
+│  + user's own credentials    │ ◀───────────── │    entities                       │
+│  + local tools / CLIs        │                │  - retrieve notes + map           │
+│                              │                │  - log steps, close sessions      │
+│ Runs every query locally.    │                │  - validate & apply updates       │
+└──────────────────────────────┘                │  - redaction, injection checks    │
+                                                ├───────────────────────────────────┤
+                                                │ PostgreSQL + pgvector             │
+                                                │  map: nodes, edges                │
+                                                │  notes: items (+ embeddings)      │
+                                                │  sessions (steps, changes)        │
+                                                └───────────────────────────────────┘
+```
+
+The same session service is exposed both as MCP tools and as a REST API. MCP is stateless: every call carries a `session_id`, so the server can run multiple instances without sticky sessions.
+
+## 3. Knowledge model
+
+Four tables and one materialized view.
+
+### Map
+
+| Table | Purpose |
+|---|---|
+| `graph_nodes` | Entities (`service:checkout`) and resources (`resource:prod:logstore:checkout-api`, `resource:prod:db:orders`). Each has a stable `node_key`, a `domain`, `aliases` used for recognition, and free-form `attributes` (index fields, region, repository, etc.). |
+| `graph_edges` | Relations: `calls`, `has_resource`, `contains` (a database contains tables, a parent service contains sub-services). Edge attributes carry details such as the filter needed on a shared log store. |
+
+The map answers *"where do I look?"*. Every map change requires evidence (see §6).
+
+### Notes
+
+| Type | Example |
+|---|---|
+| `experience` | "Checkout timeouts: check the wallet service's connection pool before the gateway." Has a short *brief* and a fuller body. |
+| `document` | A section of a guide, split by heading. |
+| `case` | A past session saved as a case: abstract, conclusion, services and resources involved. |
+| `instruction` | Rules the agent must follow, loaded by condition (`always`, or only for a given domain). Admin-only. |
+
+Each note has tags (`services`, `resources`, `task_types`, `symptoms`, `error_codes`, `keywords`) and, except for instructions, an embedding.
+
+### Sessions
+
+`sessions` stores the question, what was recalled, every step the agent logged, the conclusion, feedback on notes, the reflection, and a `changes` log of every write with before/after snapshots.
+
+### Trust
+
+A materialized view aggregates, per note, how many distinct users confirmed it and how many rated it helpful or harmful. Retrieval multiplies scores by this trust factor. Reverted sessions are excluded.
+
+## 4. Session lifecycle
+
+| Tool | When | Effect |
+|---|---|---|
+| `skill_open` | A question arrives | Creates a session; returns instructions, notes, map, bootstrap version |
+| `skill_search` / `skill_read` | The agent needs more | Returns more notes / a full note |
+| `skill_log_step` | After every action | Records the step: tool, resource, result class, short summary, IDs found |
+| `skill_close` | Answer is ready | Stores the conclusion; warns about IDs that never appeared in any step |
+| `skill_get_session` | Reflection | Returns the compressed trace, usually read by a background sub-agent |
+| `skill_update` | After closing | Writes feedback, reflection and evidence-backed knowledge |
+
+**Result classes** for a step are the backbone of the evidence gate:
+
+| Class | Meaning | Counts as evidence |
+|---|---|---|
+| `ok` | Returned data | yes |
+| `no_data` | Ran fine, nothing matched (and a sanity check shows the source has data) | yes |
+| `wrong_mapping` | The resource on the map is wrong or missing | yes |
+| `no_permission` | Not allowed | no |
+| `env_mismatch` | Wrong account / environment | no |
+| `not_available`, `error` | Couldn't run | no |
+
+## 5. Retrieval
+
+1. **Parse** the question with rules: recognize entities by name and alias, environment, time window, identifiers (trace IDs, order IDs), error codes.
+2. **Recall** notes through three routes in parallel: tag match, vector similarity, full-text.
+3. **Score**: `score = (0.45 · tag + 0.35 · vector + 0.20 · text) × trust × penalty`, where `penalty` down-weights notes from a domain the question isn't about.
+4. **Map**: expand from recognized entities to their resources (for the requested environment) and immediate neighbors.
+5. **Instructions** are selected by condition, not ranked.
+
+Only summaries are returned at first; the agent reads full notes on demand. This keeps the first response small and fast.
+
+## 6. Writing knowledge back
+
+All writes go through one call, `skill_update`, in a single transaction with a savepoint per operation (one bad operation doesn't block the others). Repeating the same `update_id` replays the first result.
+
+### The evidence gate
+
+The rule: **a fact may enter shared knowledge only if this session observed something that supports it.**
+
+| Operation | Rule |
+|---|---|
+| Any session with **zero** evidence steps | Only `feedback` and `reflection` are accepted. Everything else returns `needs_evidence`. |
+| `add_item` (new note, or merge into an existing one) | Must cite evidence steps. |
+| `save_case` | Must cite evidence steps. |
+| `update_item` | With evidence: overwrite (old version kept in `changes`). Without evidence: create a new note marked as **conflicting** with the old one; both are shown, with their trust, to future agents. |
+| Map changes (`upsert_node`, `update_node`, `add_edge`, `invalidate_*`) | Must cite evidence steps. |
+| Instructions | Admin only. |
+
+A cited step must exist in this session, be an action step, and have an evidence result class. The server checks this; the agent's word is not enough.
+
+### Other write rules
+
+- **Similar notes**: when adding a note whose title matches or whose embedding is ≥ 0.9 similar to an existing one, the server returns `needs_decision` with the candidates. The agent resubmits with `merge` (append a section — never delete) or `new`.
+- **Optimistic locking**: updates carry the `updated_at` the agent read; a mismatch returns `stale`.
+- **Conclusion status**: if a session has no evidence steps, a `confirmed` conclusion is downgraded to `likely` (and `answered` to `blocked`) at close time, with a warning.
+- **Revert by session**: an admin can undo all writes of a session, in reverse order, from the `changes` log.
+- **Fully automatic**: once evidence is present, writes happen without asking the user. The gate replaces the human reviewer.
+
+## 7. Question types
+
+Not every question is an investigation. Instructions tell the agent to classify first:
+
+| Type | Example | Flow | Output |
+|---|---|---|---|
+| Troubleshooting | "Checkout fails for user 123 with E4021" | Full: plan → act → log → conclude → reflect → write back | Report: conclusion, root cause, evidence chain, fix |
+| Data lookup | "What's the balance of wallet 123?" | Short: 1–2 queries → answer → light reflection | Table of values with their source |
+| How-to | "How do I check a wallet balance?" | Read notes only, run nothing | Steps with example commands |
+
+Because the classification and templates live in an instruction note, they can be changed without redeploying anything.
+
+## 8. Repository auto-registration
+
+Teams have many repositories, and the map rarely knows all of them. When the agent opens a session it sends the current directory's git remote. The server normalizes it to `group/name` (dropping hosts, users and tokens) and looks it up:
+
+- **Known**: the response says which entity this repository belongs to, so the agent starts there.
+- **Unknown**: the response asks the agent to inspect the repository (README, package manifest, deployment files), decide its name, domain and kind, and submit `register_repo`.
+
+`register_repo` uses the reported remote as its evidence, with extra guards: the name must not be generic (`web`, `api`, …) or already taken; attaching a repository to an existing entity requires the names to match; it fills blanks only and never overwrites an existing repository.
+
+## 9. Bootstrap and self-update
+
+The only thing installed locally is a small bootstrap skill: *when* to call the server and *how* to run a session. Everything else — instructions, notes, map — is fetched live, so updating knowledge never requires touching users' machines.
+
+`skill_open` returns the current bootstrap version. If the local copy is older, the agent downloads the new one and replaces itself.
+
+## 10. Safety
+
+- **No credentials on the server.** Users configure their own read-only credentials locally.
+- **Read-only by default.** Instructions forbid write actions on user systems; the agent proposes changes and the user runs them.
+- **Redaction** before storage: credentials and personal data are stripped from steps and conclusions. Shared notes additionally drop business identifiers.
+- **Injection checks**: text that looks like instructions to the agent ("ignore previous instructions…") is rejected from shared knowledge. Notes are always returned as *data*, separate from instructions.
+- **No request/response bodies in server logs** for skill endpoints.
+
+<a id="lessons-learned"></a>
+## 11. Lessons learned
+
+**Agents report what they intended, not what happened.**
+An agent without permission to read the relevant logs matched the problem to an old case, marked the conclusion `confirmed`, and ended with "the new findings have been saved to the knowledge base". It had verified nothing, and it hadn't saved anything either — the closing sentence came from a fixed output template. Two fixes: the server now enforces the evidence gate and downgrades unverified conclusions, and templates must report what the update call actually returned.
+
+**"Matches a past case" is not evidence.**
+Past cases are great leads and terrible proof. If they're allowed to justify writes, a single wrong case reinforces itself every time it is recalled.
+
+**Generic aliases poison recognition.**
+Aliases like `scheduler` or `gateway` matched unrelated questions. Names and aliases must be specific; generic words are rejected.
+
+**Ask the user once, or not at all.**
+Early versions asked the user to confirm every update. Nobody enjoys that, and most people just said yes. Replacing the human confirmation with an evidence check gave better data and a better experience.
+
+**Keep scripts out of the skill.**
+Shipping helper scripts to every machine looked attractive, but the rules they encoded were already in the notes, and distributing and verifying code added a lot of weight. Agents compose tool calls well from good notes.
+
+## 12. Open questions
+
+- **Temporal validity**: should overwritten facts keep a validity window (as in temporal knowledge graphs) so you can ask what was believed at a given time, instead of relying on session-level revert?
+- **Authentication**: personal tokens per user, so trust and feedback are attributed correctly.
+- **Retention**: how long to keep raw questions and steps, and what to keep after that.
+- **Evaluation**: measuring whether the skill actually gets better — repeat-question time, recall hit rate, share of writes rejected by the gate.
