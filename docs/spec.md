@@ -1,5 +1,7 @@
 # Tool spec
 
+[中文](zh/spec.md)
+
 The skill server exposes eight MCP tools (Streamable HTTP, stateless). Every tool except `skill_open` takes a `session_id`. Errors are returned as:
 
 ```json

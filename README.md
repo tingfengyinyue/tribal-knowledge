@@ -26,6 +26,21 @@ The usual fixes don't hold up:
 | Per-user agent memory | Knowledge stays siloed with one person |
 | "Remember everything" shared memory | Fills up with guesses, hallucinations and stale facts — and the next agent trusts them |
 
+## Where this came from
+
+This started as a personal setup: [agent-skill-patterns](https://github.com/tingfengyinyue/agent-skill-patterns), a local, file-based knowledge base for my own agent. Lessons were written as Markdown "operational memories" after every task (a Sense → Plan → Act → Reflect loop), loaded through a cheap index, and linked to incidents and services in both directions. It worked well enough to be shared with other teams.
+
+Sharing it is where it broke down:
+
+- **Every copy drifts.** Each person runs their own copy; what one agent learns never reaches anyone else's.
+- **Nothing checks what gets written.** The agent writes its own lessons and rates its own confidence. Wrong lessons were only caught later, by hand.
+- **Keyword indexes don't scale.** Recall depends on exact tags; as notes pile up, relevant ones get missed.
+- **Maintenance falls on people.** Links, hit counts and lifecycle fields are conventions that someone has to keep consistent.
+- **Secrets creep in.** With no redaction step, local notes ended up holding credentials and internal details, so they couldn't be shared as-is.
+- **Updates don't reach people.** Improving a rule means everyone re-copying files, so most copies quietly stay on old versions.
+
+This project keeps what worked (the reflection loop, lessons with triggers, cheap-first loading, lifecycle) and moves the knowledge to a server that every agent shares, with the server — not the agent — deciding what is allowed in. Details: [docs/design.md](docs/design.md#0-background-from-a-local-skill-to-a-shared-one).
+
 ## The idea
 
 **One shared skill for the whole team, hosted on a server, that grows every time someone uses it — but only writes down what was actually verified.**
@@ -35,7 +50,7 @@ Four principles:
 1. **One shared skill.** Knowledge lives on a server. Every teammate's agent reads from and writes to the same skill through [MCP](https://modelcontextprotocol.io).
 2. **Execute locally.** Tools and credentials stay on each user's machine. The server holds knowledge, never secrets, and never runs the user's tools.
 3. **Evidence-gated writes.** A fact can only be written if the current session actually ran an operation that produced a result supporting it. Guesses, recollections and "it matches a past case" go into reflection, not into the knowledge base.
-4. **Write back automatically.** No review queue, no approval step. If the evidence is there, the knowledge is saved; the next person benefits immediately.
+4. **Write back by default, review what's risky.** The person asking is never interrupted. Today, every evidence-backed write is applied immediately and can be reverted per session. Planned: a **risk-tiered review queue** — low-risk additions still go straight in, while risky changes (overwriting well-trusted notes, invalidating knowledge, changing the map) wait for a domain owner's approval. See [design §6](docs/design.md#planned-risk-tiered-review-queue).
 
 ## How it works
 
@@ -86,12 +101,13 @@ We learned this the hard way: an agent without permission to read the logs "solv
 
 - **Question types**: troubleshooting, data lookup and how-to questions follow different flows and output templates.
 - **Auto-registering repositories**: the agent reports the current directory's git remote; if the repository isn't on the map yet, it analyzes it and registers it.
-- **Self-updating bootstrap**: the server reports the bootstrap version; outdated clients refresh themselves.
+- **Review queue (planned)**: risky changes wait for a domain owner, with the diff and the cited evidence shown side by side; everything else stays automatic.
+- **Zero-touch updates**: instructions, notes and the map are fetched live on every question, so a rule fixed on the server applies to everyone's very next question — nobody re-installs anything. The only local file is a thin bootstrap that refreshes itself when its version changes.
 - **Freshness**: every note carries the date it was last confirmed. Notes not confirmed for 90 days are flagged `stale`, ranked lower, and treated as leads to verify. A note marked helpful in a session with real evidence gets its date refreshed automatically.
 - **Revert by session**: every change records before/after, so a whole session's writes can be undone.
 - **Redaction and injection checks** before anything enters shared knowledge.
 
-Full design: [docs/design.md](docs/design.md) · Tool spec: [docs/spec.md](docs/spec.md)
+Full design: [docs/design.md](docs/design.md) · Tool spec: [docs/spec.md](docs/spec.md) · 中文: [设计](docs/zh/design.md) / [接口](docs/zh/spec.md)
 
 ## Related work
 

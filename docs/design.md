@@ -1,9 +1,12 @@
 # Design
 
+[中文](zh/design.md)
+
 This document describes the design of a *shared, evidence-gated skill*: one skill that a whole team's agents use, that grows with every session, and that only accepts facts backed by evidence from the session that produced them.
 
 Examples use a fictional e-commerce team (`checkout`, `orders`, `wallet` services). The pattern is domain-independent: operations, customer support, data analysis or internal tooling all fit.
 
+- [0. Background: from a local skill to a shared one](#0-background-from-a-local-skill-to-a-shared-one)
 - [1. Goals and non-goals](#1-goals-and-non-goals)
 - [2. Architecture](#2-architecture)
 - [3. Knowledge model](#3-knowledge-model)
@@ -12,10 +15,42 @@ Examples use a fictional e-commerce team (`checkout`, `orders`, `wallet` service
 - [6. Writing knowledge back](#6-writing-knowledge-back)
 - [7. Question types](#7-question-types)
 - [8. Repository auto-registration](#8-repository-auto-registration)
-- [9. Bootstrap and self-update](#9-bootstrap-and-self-update)
+- [9. Bootstrap and zero-touch updates](#9-bootstrap-and-zero-touch-updates)
 - [10. Safety](#10-safety)
 - [11. Lessons learned](#lessons-learned)
 - [12. Open questions](#12-open-questions)
+
+---
+
+## 0. Background: from a local skill to a shared one
+
+The first version was [agent-skill-patterns](https://github.com/tingfengyinyue/agent-skill-patterns): a local, file-based knowledge base that one person's agent reads and writes.
+
+**How it worked**
+
+- **SPAR loop.** Every task goes Sense → Plan → Act → Reflect. *Plan* recalls past lessons; *Reflect* answers four fixed questions (detours? better order? pitfalls? a rule for next time?) and writes the answer down.
+- **Operational memories (OMs).** Each lesson is a Markdown file with a trigger (task type, services, symptoms), a `better_action`, a confidence level (low → medium → high), a hit count and a lifecycle (active → superseded / deprecated / graduated to a runbook).
+- **Funnel loading.** A small JSON index is filtered first; only matching entries are read, and only then the relevant section of a service document. Typical loads stayed in the low hundreds of tokens.
+- **Two-way links and a "temporal bridge".** Every relation is stored at both ends. An OM points back to the incident that produced it and forward, through its trigger, to the future tasks it should apply to.
+
+It made one person — and, once copied, a few teams — noticeably faster. Sharing it exposed its limits:
+
+| Problem in the local version | What it caused | How the shared version addresses it |
+|---|---|---|
+| One copy per person | What one agent learns never reaches anyone else; copies drift apart | One server-side knowledge base, read and written by every agent over MCP |
+| The agent writes and rates its own lessons | Wrong lessons enter freely; they are found later and corrected by hand (superseded banners, manual edits) | Writes are gated by evidence from the session; unverified conclusions are downgraded (§6) |
+| Recall through a keyword index | Misses when the wording differs; the index itself grows with the notes | Tags + vector similarity + full text, ranked together (§5) |
+| Links, hit counts and lifecycle are conventions | Someone has to keep them consistent; scripts rebuild relations after the fact | The map is stored as a graph and queried in both directions; trust is aggregated from feedback automatically |
+| No redaction step | Credentials and internal identifiers end up in notes, so notes can't be shared as-is | Redaction and injection checks before anything is stored (§10) |
+| No record of how notes were used | No way to tell which lessons actually helped | Every session logs recalls, steps, feedback and changes |
+| Updating means editing every copy | New rules reach people only when they re-copy the files | A thin local bootstrap; instructions, notes and map are fetched live (§9) |
+
+**What carried over**
+
+- *Reflect* is still mandatory, and its output still becomes `experience` notes with triggers (tags) and a brief "do this next time".
+- *Cheap first, deep on demand*: `skill_open` returns summaries; full notes are read only when needed.
+- *The temporal bridge*: an experience still points back to where it came from — now the exact session steps cited as evidence — and forward through its tags.
+- *Lifecycle*: superseding, conflicts, and a last-verified date with staleness (§5) replace hand-maintained confidence and hit counts.
 
 ---
 
@@ -27,12 +62,12 @@ Examples use a fictional e-commerce team (`checkout`, `orders`, `wallet` service
 - Knowledge improves as a side effect of normal use — nobody has to "go update the docs".
 - Users keep their own credentials and run their own tools. The server never needs access to production systems.
 - Shared knowledge stays trustworthy: a confident-sounding agent cannot pollute it.
-- Minimal user interaction: no review queues, no approval steps, no "should I save this?" prompts.
+- Minimal user interaction: the person asking is never asked "should I save this?". Where review is needed, it goes to the people who own the knowledge, not to whoever happens to be investigating.
 
 **Non-goals**
 
 - The server does not call a general-purpose LLM. All generation (understanding the question, planning, writing conclusions and reflections) is done by the user's agent. The server only does deterministic work plus embeddings.
-- No versioning or approval workflow. Every change is recorded and can be reverted instead.
+- No versioning. Every change is recorded and can be reverted instead. (There is no approval step today either; a risk-tiered review queue is planned — see §6.)
 - No code distribution. The agent composes its own tool calls from the instructions and notes; the skill does not ship scripts that run on users' machines.
 
 ## 2. Architecture
@@ -157,7 +192,27 @@ A cited step must exist in this session, be an action step, and have an evidence
 - **Optimistic locking**: updates carry the `updated_at` the agent read; a mismatch returns `stale`.
 - **Conclusion status**: if a session has no evidence steps, a `confirmed` conclusion is downgraded to `likely` (and `answered` to `blocked`) at close time, with a warning.
 - **Revert by session**: an admin can undo all writes of a session, in reverse order, from the `changes` log.
-- **Fully automatic**: once evidence is present, writes happen without asking the user. The gate replaces the human reviewer.
+- **Automatic today**: once evidence is present, writes happen without asking the user, and an admin can revert a session afterwards. This keeps the knowledge growing while the team is small; it is not meant to be the final word on review.
+
+<a id="planned-risk-tiered-review-queue"></a>
+### Planned: risk-tiered review queue
+
+The evidence gate stops writes that have *no* basis. It cannot tell whether an evidence-backed write is *right*: an agent may read real logs and still draw the wrong conclusion. As more people write, and as some notes become things the whole team relies on, a second pair of eyes becomes worth its cost — but only where a mistake is expensive. The plan is to route writes by risk instead of reviewing everything:
+
+| Tier | Examples | Handling |
+|---|---|---|
+| **Auto** | New experiences and cases with evidence; feedback; reflection; refreshing the last-verified date; registering a repository that isn't on the map yet | Applied immediately, as today |
+| **Review** | Overwriting a note with high trust (many confirmations); invalidating a note; map changes that remove or redirect (`invalidate_node`, `invalidate_edge`, changing a resource's identifiers); writes that conflict with existing knowledge; writes from contributors with a high revert rate | Stored as a **pending change**; not recalled for other users until approved |
+| **Admin only** | Instructions (the rules every agent follows) | Changed by administrators, as today |
+
+How review would work:
+
+- **Who reviews**: owners per domain (e.g. the team that owns `checkout`), never the person who asked the question.
+- **What they see**: the before/after diff, the cited evidence steps with their summaries, the session's question and conclusion, and the note's trust history. Approve, reject, or edit then approve — from a web page or a chat card.
+- **While pending**: the author's own session sees the change marked as pending; everyone else keeps seeing the current version. Conflicting pending changes are reviewed together.
+- **Timeouts**: pending changes that nobody reviews expire after a set period instead of auto-approving, so the queue cannot silently turn into a backdoor.
+- **Tuning**: approval and revert rates per tier and per contributor feed back into the thresholds. A tier that is approved almost every time can move to *Auto*; one that is often reverted can move to *Review*.
+- **Audit**: reviews are recorded in the same `changes` log, so revert-by-session keeps working.
 
 ## 7. Question types
 
@@ -180,9 +235,11 @@ Teams have many repositories, and the map rarely knows all of them. When the age
 
 `register_repo` uses the reported remote as its evidence, with extra guards: the name must not be generic (`web`, `api`, …) or already taken; attaching a repository to an existing entity requires the names to match; it fills blanks only and never overwrites an existing repository.
 
-## 9. Bootstrap and self-update
+## 9. Bootstrap and zero-touch updates
 
-The only thing installed locally is a small bootstrap skill: *when* to call the server and *how* to run a session. Everything else — instructions, notes, map — is fetched live, so updating knowledge never requires touching users' machines.
+The only thing installed locally is a small bootstrap skill: *when* to call the server and *how* to run a session. Everything else — instructions, notes, map — is fetched live on every question.
+
+This is one of the biggest practical wins of a shared skill: **updates are invisible to users**. Changing how questions are classified, tightening the evidence rules or adding staleness guidance were all done by editing instruction notes on the server; every teammate's next question used the new rules, and nobody re-installed or upgraded anything. Compare the local version, where an improvement only reached people who remembered to re-copy the files.
 
 `skill_open` returns the current bootstrap version. If the local copy is older, the agent downloads the new one and replaces itself.
 
@@ -210,7 +267,7 @@ Aliases like `scheduler` or `gateway` matched unrelated questions. Names and ali
 The original per-person notes recorded when a fact became true, when it was observed and which note superseded which. A first import kept the text and dropped most of that, and even treated "partially superseded" as "invalid", silently hiding a still-useful note. Time and provenance fields are part of the knowledge, not decoration.
 
 **Ask the user once, or not at all.**
-Early versions asked the user to confirm every update. Nobody enjoys that, and most people just said yes. Replacing the human confirmation with an evidence check gave better data and a better experience.
+Early versions asked the user to confirm every update. Nobody enjoys that, and most people just said yes. Replacing the human confirmation with an evidence check gave better data and a better experience. Confirming with the person who happens to be investigating is not the same as review, though: for changes where a mistake is expensive, the planned review queue sends them to the people who own that knowledge.
 
 **Keep scripts out of the skill.**
 Shipping helper scripts to every machine looked attractive, but the rules they encoded were already in the notes, and distributing and verifying code added a lot of weight. Agents compose tool calls well from good notes.
@@ -221,3 +278,4 @@ Shipping helper scripts to every machine looked attractive, but the rules they e
 - **Authentication**: personal tokens per user, so trust and feedback are attributed correctly.
 - **Retention**: how long to keep raw questions and steps, and what to keep after that.
 - **Evaluation**: measuring whether the skill actually gets better — repeat-question time, recall hit rate, share of writes rejected by the gate.
+- **Review thresholds**: what counts as "high trust", which map changes need review, and how long pending changes may wait before they expire.
