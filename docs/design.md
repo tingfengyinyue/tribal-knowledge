@@ -6,6 +6,7 @@ This document describes the design of a *shared, evidence-gated skill*: one skil
 
 Examples use a fictional e-commerce team (`checkout`, `orders`, `wallet` services). The pattern is domain-independent: operations, customer support, data analysis or internal tooling all fit.
 
+- [The idea: self-growing shared knowledge](#the-idea-self-growing-shared-knowledge)
 - [0. Background: from a local skill to a shared one](#0-background-from-a-local-skill-to-a-shared-one)
 - [1. Goals and non-goals](#1-goals-and-non-goals)
 - [2. Architecture](#2-architecture)
@@ -19,6 +20,91 @@ Examples use a fictional e-commerce team (`checkout`, `orders`, `wallet` service
 - [10. Safety](#10-safety)
 - [11. Lessons learned](#lessons-learned)
 - [12. Open questions](#12-open-questions)
+
+---
+
+<a id="the-idea-self-growing-shared-knowledge"></a>
+## The idea: self-growing shared knowledge
+
+### What "self-growing" means
+
+A knowledge base is *self-growing* when it improves as a side effect of being used, without anyone explicitly maintaining it. Users ask questions, agents investigate, and the knowledge that emerges from those investigations flows back into the system — so the next person who asks a similar question starts from a better position.
+
+This is a departure from how most teams manage operational knowledge today. The usual approaches — runbooks, wikis, shared docs — require someone to write and update them. That person is always busy, the docs drift from reality, and the gap between what the team knows and what is written down only widens.
+
+Self-growing knowledge replaces "someone needs to update the docs" with "the docs update themselves, as a byproduct of doing real work." The key constraint is that not everything an agent says should be trusted. Without a quality gate, the knowledge base fills up with hallucinations, guesses and stale facts — and the next agent trusts them, creating a feedback loop of compounding errors.
+
+### Where this idea comes from
+
+The concept draws from several lines of research:
+
+**Experiential learning for agents.** [ExpeL](https://arxiv.org/abs/2308.10144) (Zhao et al., AAAI 2024) showed that LLM agents can learn from experience without fine-tuning: the agent attempts tasks, reflects on successes and failures, extracts reusable insights, and applies them to future tasks. ExpeL's insight pool is the closest ancestor of our `experience` notes — lessons written by the agent, indexed for future retrieval, with the critical difference that ExpeL's insights are *per-agent* and *self-assessed*.
+
+**Lifelong skill accumulation.** [Voyager](https://arxiv.org/abs/2305.16291) (Wang et al., NeurIPS 2023) demonstrated a different form of self-growing knowledge: a skill library that grows as the agent explores, where each skill is an executable program verified by the environment. Voyager's key principle — *the environment verifies, not the agent* — maps directly to our evidence gate: the server, not the agent, decides what is allowed in.
+
+**Context that accumulates across sessions.** [ACE](https://arxiv.org/abs/2510.04618) (Accumulative Context Engineering) formalized the idea that the context an agent operates in should not start from scratch every time, but should accumulate useful knowledge across interactions. This is exactly what `skill_open` does: every new question starts with the context of everything the team has learned before.
+
+**Reflective memory.** [RAISE](https://arxiv.org/abs/2401.02009) (Reflective Agent with Self-Evolving Knowledge Base) combined a self-evolving knowledge base with reflective memory, where the agent's reflections feed back into long-term storage. Our design follows the same pattern: the `reflection` field in `skill_update` captures what went well, what didn't, and what to try next time — and this becomes part of the knowledge base.
+
+**Collective intelligence.** The multi-agent research community (CoELA, CoALA, and the emerging agent framework ecosystem) has converged on shared persistent memory as the key to collective intelligence: agents contribute to and draw from a common pool, so knowledge compounds across the team rather than staying siloed with individuals.
+
+### What's different here
+
+These works share a common aspiration — agents that learn from experience — but each has a gap that matters in production:
+
+| Approach | What it does well | What's missing for a team |
+|---|---|---|
+| **ExpeL** | Agents extract reusable insights from experience | Single agent; insights are self-assessed with no quality gate; knowledge stays with one agent |
+| **Voyager** | Environment-verified skills that accumulate | Single agent in a game; skills are executable code, not declarative knowledge; no team sharing |
+| **Graphiti / Mem0 / Cognee** | Persistent memory for agents, often with graphs | General memory; no distinction between "I verified this" and "I think this"; per-user scopes |
+| **RAISE** | Self-evolving knowledge base with reflection | Single agent; no evidence gate on writes; no team sharing |
+| **Shared memory in multi-agent systems** | Agents read/write a common pool | No quality gate; no provenance tracking; no freshness model |
+
+What seems uncommon is the combination of all three:
+
+1. **Shared across a team.** Not per-agent or per-user, but one skill that every teammate's agent reads from and writes to.
+2. **Evidence-gated writes.** The server enforces that only facts backed by in-session observations can enter the knowledge base. Guesses, recollections and "matches a past case" go into reflection, not into shared knowledge.
+3. **Local execution.** The server holds knowledge, never credentials. Every tool call runs on the user's own machine. This means the server never needs access to production systems, and credentials never leave the user's environment.
+
+### The self-growth loop
+
+The mechanism is a four-step feedback loop:
+
+```
+  ┌──────────────────────────────────────────────────┐
+  │                                                  │
+  ▼                                                  │
+Ask ──▶ Retrieve knowledge ──▶ Investigate ──▶ Write back
+  │         (skill_open)     (log_step × N)   (skill_update)
+  │              │                                   │
+  │              │        knowledge grows here ───────┘
+  │              │                │
+  │              ▼                │
+  │    Next question starts       │
+  │    with better context ◀──────┘
+  └──────────────────────────────────────────────────┘
+```
+
+1. **Ask**: a user asks their agent a question.
+2. **Retrieve**: the server returns what the team already knows — notes, map, instructions.
+3. **Investigate**: the agent runs tools locally, logging each step. Some steps produce real observations (evidence).
+4. **Write back**: the agent submits what it learned. The server accepts only what is backed by evidence from this session.
+
+The next person who asks a similar question gets a better starting point. Over time, the system accumulates a map of the team's infrastructure, a library of lessons learned, and a body of cases — all grown organically from real investigations, not from someone sitting down to write documentation.
+
+### Why evidence matters
+
+The evidence gate is not a nice-to-have; it is the mechanism that makes self-growth sustainable. Without it, the knowledge base is only as reliable as the least careful agent — and agents are very good at sounding confident about things they haven't verified.
+
+We learned this firsthand: an agent without log-reading permissions matched a problem to an old case, reported the conclusion as "confirmed", and announced that "new findings have been saved to the knowledge base". It had run zero queries. Nothing was verified. Nothing was actually saved either — the announcement came from a fixed template. But if the evidence gate hadn't caught it, that false conclusion would have been recalled by the next agent who asked a similar question, reinforcing itself.
+
+The rule is simple: **only what you observed in this session can become shared knowledge.** Everything else — reflections, hunches, connections to past cases — is valuable, but it goes into a different bucket (reflection) that is stored for the agent's own learning, not served as facts to the next person.
+
+### Knowledge decay and freshness
+
+Self-growing knowledge has a second problem beyond quality: **decay**. The infrastructure changes, log stores get renamed, databases move, APIs evolve. A note that was correct six months ago may be silently wrong today.
+
+The freshness model addresses this: every note carries a "last verified" date, updated only when someone confirms it is still useful *in a session with real evidence*. Notes not verified for 90 days are flagged as stale, ranked lower in retrieval, and presented to the agent as "leads to verify, not facts to rely on." This creates a natural lifecycle: valuable knowledge gets regularly refreshed through use; knowledge that nobody needs quietly fades from prominence without anyone having to manually deprecate it.
 
 ---
 
