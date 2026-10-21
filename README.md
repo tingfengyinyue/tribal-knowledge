@@ -4,7 +4,7 @@
 
 [中文说明](README.zh-CN.md)
 
-> Status: design and spec. A minimal reference implementation is planned.
+> Status: reference implementation (Go) + design docs. Run it with `docker compose up && make run`.
 
 ---
 
@@ -108,6 +108,53 @@ We learned this the hard way: an agent without permission to read the logs "solv
 - **Redaction and injection checks** before anything enters shared knowledge.
 
 Full design: [docs/design.md](docs/design.md) · Tool spec: [docs/spec.md](docs/spec.md) · 中文: [设计](docs/zh/design.md) / [接口](docs/zh/spec.md)
+
+## Quick start
+
+```bash
+# 1. Start PostgreSQL with pgvector
+docker compose up -d
+
+# 2. Set your embedding API key (OpenAI-compatible or DashScope)
+export TK_EMBEDDING_DRIVER=openai          # or "dashscope"
+export TK_EMBEDDING_API_KEY=sk-...
+export TK_EMBEDDING_MODEL=text-embedding-3-small
+
+# 3. Run the server
+make run
+# → listening on :8080, MCP at /mcp, REST at /api/v1/skill/*
+
+# 4. Connect your agent
+# In Claude Code:  claude mcp add tribal-knowledge --transport http http://localhost:8080/mcp
+```
+
+### Project structure
+
+```
+cmd/server/main.go           Entry point
+internal/
+  model/                     Core types: nodes, edges, items, sessions, steps
+  store/                     PostgreSQL + pgvector persistence
+  session/                   Session lifecycle, evidence gate, conclusion downgrade, repo registration
+  retrieval/                 Three-way search (tag + vector + full-text), stale penalty
+  mcpserver/                 MCP Streamable HTTP — 8 tools
+  bootstrap/                 Embedded bootstrap skill file, version self-update
+  embedding/                 Pluggable embedders: OpenAI-compatible, DashScope, noop
+  web/                       REST API handlers, MCP HTTP wrapper
+  config/                    Environment-based configuration
+migrations/                  PostgreSQL schema
+docker-compose.yml           One-command PG + pgvector
+```
+
+### Environment variables
+
+| Variable | Default | Description |
+|---|---|---|
+| `TK_PORT` | `8080` | Server port |
+| `TK_DATABASE_URL` | `postgres://tk:tk_dev@localhost:5432/tribal_knowledge?sslmode=disable` | PostgreSQL DSN |
+| `TK_EMBEDDING_DRIVER` | `openai` | `openai`, `dashscope`, or empty (noop) |
+| `TK_EMBEDDING_API_KEY` | — | API key for the embedding service |
+| `TK_EMBEDDING_MODEL` | `text-embedding-3-small` | Embedding model name |
 
 ## Related work
 

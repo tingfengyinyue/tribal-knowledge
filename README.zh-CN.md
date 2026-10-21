@@ -4,7 +4,7 @@
 
 [English](README.md)
 
-> 状态：设计与接口规范。最小参考实现在计划中。
+> 状态：参考实现（Go）+ 设计文档。`docker compose up && make run` 即可运行。
 
 ---
 
@@ -108,6 +108,53 @@ flowchart LR
 - 写入共享知识前做**脱敏和注入检测**。
 
 完整设计：[docs/design.md](docs/zh/design.md) · 工具接口：[docs/spec.md](docs/zh/spec.md)
+
+## 快速启动
+
+```bash
+# 1. 启动 PostgreSQL + pgvector
+docker compose up -d
+
+# 2. 设置 embedding API key（OpenAI 兼容接口或 DashScope）
+export TK_EMBEDDING_DRIVER=openai          # 或 "dashscope"
+export TK_EMBEDDING_API_KEY=sk-...
+export TK_EMBEDDING_MODEL=text-embedding-3-small
+
+# 3. 启动服务
+make run
+# → 监听 :8080，MCP 端点 /mcp，REST 端点 /api/v1/skill/*
+
+# 4. 连接你的 agent
+# Claude Code: claude mcp add tribal-knowledge --transport http http://localhost:8080/mcp
+```
+
+### 项目结构
+
+```
+cmd/server/main.go           入口
+internal/
+  model/                     核心类型：节点、边、笔记、会话、步骤
+  store/                     PostgreSQL + pgvector 存储层
+  session/                   会话生命周期、证据门禁、结论降级、仓库登记
+  retrieval/                 三路检索（标签 + 向量 + 全文），过期惩罚
+  mcpserver/                 MCP Streamable HTTP — 8 个工具
+  bootstrap/                 内嵌的引导文件，版本自更新
+  embedding/                 可插拔 embedder：OpenAI 兼容、DashScope、noop
+  web/                       REST API handlers，MCP HTTP 封装
+  config/                    基于环境变量的配置
+migrations/                  PostgreSQL 建表
+docker-compose.yml           一键启动 PG + pgvector
+```
+
+### 环境变量
+
+| 变量 | 默认值 | 说明 |
+|---|---|---|
+| `TK_PORT` | `8080` | 服务端口 |
+| `TK_DATABASE_URL` | `postgres://tk:tk_dev@localhost:5432/tribal_knowledge?sslmode=disable` | PostgreSQL 连接串 |
+| `TK_EMBEDDING_DRIVER` | `openai` | `openai`、`dashscope` 或留空（noop） |
+| `TK_EMBEDDING_API_KEY` | — | embedding 服务的 API key |
+| `TK_EMBEDDING_MODEL` | `text-embedding-3-small` | embedding 模型名 |
 
 ## 相关项目
 
