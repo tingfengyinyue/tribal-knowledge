@@ -3,7 +3,6 @@ package store
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"time"
 
 	"github.com/tingfengyinyue/tribal-knowledge/internal/model"
@@ -92,6 +91,14 @@ func (s *Store) UpsertEdge(ctx context.Context, e *model.Edge) error {
 		Where("source_node_id = ? AND target_node_id = ? AND edge_type = ?", e.SourceNodeID, e.TargetNodeID, e.EdgeType).
 		Assign(model.Edge{Attributes: e.Attributes, Status: "active"}).
 		FirstOrCreate(e).Error
+}
+
+func (s *Store) InvalidateEdge(ctx context.Context, sourceID, targetID int64, edgeType string) (int64, error) {
+	res := s.db.WithContext(ctx).
+		Model(&model.Edge{}).
+		Where("source_node_id = ? AND target_node_id = ? AND edge_type = ? AND status = 'active'", sourceID, targetID, edgeType).
+		Updates(map[string]any{"status": "invalid", "updated_at": time.Now()})
+	return res.RowsAffected, res.Error
 }
 
 func (s *Store) GetNeighbors(ctx context.Context, nodeID int64) ([]model.Edge, error) {
@@ -262,8 +269,4 @@ func (s *Store) Ping(ctx context.Context) error {
 		return err
 	}
 	return sqlDB.PingContext(ctx)
-}
-
-func init() {
-	_ = slog.Default()
 }

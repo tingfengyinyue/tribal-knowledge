@@ -27,21 +27,25 @@ func main() {
 	}
 	slog.Info("database connected")
 
-	// Embedder
+	// Embedder; nil means notes are found by tags and full text only.
 	var embedder embedding.Embedder
 	switch cfg.EmbeddingDriver {
 	case "dashscope":
 		embedder = embedding.NewDashScope(cfg.EmbeddingAPIKey, cfg.EmbeddingModel, cfg.EmbeddingDim)
 	case "openai":
-		embedder = embedding.NewOpenAI(cfg.EmbeddingAPIKey, cfg.EmbeddingModel, "", cfg.EmbeddingDim)
+		embedder = embedding.NewOpenAI(cfg.EmbeddingAPIKey, cfg.EmbeddingModel, cfg.EmbeddingURL, cfg.EmbeddingDim)
+	case "", "none", "noop":
+		slog.Info("no embedding driver configured; vector search is off")
 	default:
-		slog.Warn("no embedding driver configured, using noop embedder")
-		embedder = embedding.NewNoop(cfg.EmbeddingDim)
+		log.Fatalf("unknown TK_EMBEDDING_DRIVER %q (use openai, dashscope or leave empty)", cfg.EmbeddingDriver)
+	}
+	if cfg.AdminToken == "" {
+		slog.Info("TK_ADMIN_TOKEN not set; admin endpoints are disabled")
 	}
 
 	// Services
 	ret := retrieval.New(st, embedder)
-	svc := session.NewService(st, ret)
+	svc := session.NewService(st, ret, embedder)
 
 	// MCP server
 	mcpSrv := mcpserver.New(svc, st)
@@ -50,7 +54,7 @@ func main() {
 	r := gin.Default()
 
 	// REST API
-	handler := web.NewHandler(svc, st)
+	handler := web.NewHandler(svc, st, cfg.AdminToken)
 	handler.RegisterRoutes(r)
 
 	// MCP endpoint

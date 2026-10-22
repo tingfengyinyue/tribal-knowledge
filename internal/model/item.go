@@ -7,21 +7,21 @@ import (
 )
 
 type Item struct {
-	ID         int64           `gorm:"primaryKey" json:"id"`
-	ItemType   string          `gorm:"not null" json:"item_type"` // experience, document, case, instruction
-	Title      string          `json:"title"`
-	Summary    string          `json:"summary"`
-	Content    string          `json:"content"`
-	Tags       StringArray     `gorm:"type:text[]" json:"tags"`
-	NodeIDs    Int64Array      `gorm:"type:bigint[]" json:"node_ids"`
-	Attributes JSONB           `gorm:"type:jsonb;default:'{}'" json:"attributes"`
-	Trust      float32         `gorm:"default:1.0" json:"trust"`
-	Status     string          `gorm:"default:active" json:"status"` // active, invalid, superseded
-	LoadWhen   string          `gorm:"default:relevant" json:"load_when"`
-	SortOrder  int             `gorm:"default:0" json:"sort_order"`
-	Embedding  *pgvector.Vector `gorm:"type:vector(1536)" json:"-"`
-	CreatedAt  time.Time       `json:"created_at"`
-	UpdatedAt  time.Time       `json:"updated_at"`
+	ID         int64            `gorm:"primaryKey" json:"id"`
+	ItemType   string           `gorm:"not null" json:"item_type"` // experience, document, case, instruction
+	Title      string           `json:"title"`
+	Summary    string           `json:"summary"`
+	Content    string           `json:"content"`
+	Tags       StringArray      `gorm:"type:text[]" json:"tags"`
+	NodeIDs    Int64Array       `gorm:"type:bigint[]" json:"node_ids"`
+	Attributes JSONB            `gorm:"type:jsonb;default:'{}'" json:"attributes"`
+	Trust      float32          `gorm:"default:1.0" json:"trust"`
+	Status     string           `gorm:"default:active" json:"status"` // active, invalid, superseded
+	LoadWhen   string           `gorm:"default:relevant" json:"load_when"`
+	SortOrder  int              `gorm:"default:0" json:"sort_order"`
+	Embedding  *pgvector.Vector `gorm:"type:vector" json:"-"`
+	CreatedAt  time.Time        `json:"created_at"`
+	UpdatedAt  time.Time        `json:"updated_at"`
 }
 
 func (Item) TableName() string { return "tk_items" }

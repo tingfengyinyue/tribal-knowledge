@@ -41,10 +41,10 @@ type Update struct {
 	ID         int64     `gorm:"primaryKey" json:"id"`
 	SessionID  int64     `gorm:"not null" json:"session_id"`
 	UpdateID   string    `json:"update_id"`
-	Feedback   JSONB     `gorm:"type:jsonb;default:'[]'" json:"feedback"`
+	Feedback   JSONArray `gorm:"type:jsonb" json:"feedback"`
 	Reflection JSONB     `gorm:"type:jsonb;default:'{}'" json:"reflection"`
-	Operations JSONB     `gorm:"type:jsonb;default:'[]'" json:"operations"`
-	Results    JSONB     `gorm:"type:jsonb;default:'[]'" json:"results"`
+	Operations JSONArray `gorm:"type:jsonb" json:"operations"`
+	Results    JSONArray `gorm:"type:jsonb" json:"results"`
 	CreatedAt  time.Time `json:"created_at"`
 }
 
@@ -56,7 +56,7 @@ type Case struct {
 	ItemID        *int64    `json:"item_id"`
 	Title         string    `json:"title"`
 	Summary       string    `json:"summary"`
-	StepsSnapshot JSONB     `gorm:"type:jsonb;default:'[]'" json:"steps_snapshot"`
+	StepsSnapshot JSONArray `gorm:"type:jsonb" json:"steps_snapshot"`
 	Conclusion    JSONB     `gorm:"type:jsonb;default:'{}'" json:"conclusion"`
 	CreatedAt     time.Time `json:"created_at"`
 }

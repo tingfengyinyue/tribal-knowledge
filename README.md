@@ -14,7 +14,7 @@ Every team has *tribal knowledge*: the things that live only in people's heads.
 
 - "The search index on that log store only covers the `message` field — filter on that, not `level`."
 - "Orders in that region are in a different database."
-- "Error E4021 means the wallet service, not the payment gateway."
+- "Error E4021 means the wallet service, not the payment provider."
 
 Coding agents are now good enough to investigate problems on their own, but each agent starts from zero. The lesson one teammate's agent learned yesterday is gone today, and the next teammate pays for it again.
 
@@ -111,14 +111,16 @@ Full design: [docs/design.md](docs/design.md) · Tool spec: [docs/spec.md](docs/
 
 ## Quick start
 
+Requires Go 1.23+ and Docker.
+
 ```bash
-# 1. Start PostgreSQL with pgvector
+# 1. Start PostgreSQL with pgvector (port 5433; the schema is created automatically)
 docker compose up -d
 
-# 2. Set your embedding API key (OpenAI-compatible or DashScope)
+# 2. Optional: enable vector search (OpenAI-compatible or DashScope).
+#    Without it, notes are found by tags and full text.
 export TK_EMBEDDING_DRIVER=openai          # or "dashscope"
 export TK_EMBEDDING_API_KEY=sk-...
-export TK_EMBEDDING_MODEL=text-embedding-3-small
 
 # 3. Run the server
 make run
@@ -127,6 +129,8 @@ make run
 # 4. Connect your agent
 # In Claude Code:  claude mcp add tribal-knowledge --transport http http://localhost:8080/mcp
 ```
+
+> **Security**: the reference server has no user authentication yet — run it on a trusted network. Admin endpoints (revert a session) require `TK_ADMIN_TOKEN` and are disabled when it isn't set.
 
 ### Project structure
 
@@ -139,7 +143,7 @@ internal/
   retrieval/                 Three-way search (tag + vector + full-text), stale penalty
   mcpserver/                 MCP Streamable HTTP — 8 tools
   bootstrap/                 Embedded bootstrap skill file, version self-update
-  embedding/                 Pluggable embedders: OpenAI-compatible, DashScope, noop
+  embedding/                 Pluggable embedders: OpenAI-compatible, DashScope
   web/                       REST API handlers, MCP HTTP wrapper
   config/                    Environment-based configuration
 migrations/                  PostgreSQL schema
@@ -151,10 +155,12 @@ docker-compose.yml           One-command PG + pgvector
 | Variable | Default | Description |
 |---|---|---|
 | `TK_PORT` | `8080` | Server port |
-| `TK_DATABASE_URL` | `postgres://tk:tk_dev@localhost:5432/tribal_knowledge?sslmode=disable` | PostgreSQL DSN |
-| `TK_EMBEDDING_DRIVER` | `openai` | `openai`, `dashscope`, or empty (noop) |
+| `TK_DATABASE_URL` | `postgres://tk:tk_dev@localhost:5433/tribal_knowledge?sslmode=disable` | PostgreSQL DSN |
+| `TK_EMBEDDING_DRIVER` | empty | `openai`, `dashscope`, or empty (no vector search) |
 | `TK_EMBEDDING_API_KEY` | — | API key for the embedding service |
-| `TK_EMBEDDING_MODEL` | `text-embedding-3-small` | Embedding model name |
+| `TK_EMBEDDING_MODEL` | `text-embedding-3-small` / `text-embedding-v3` | Embedding model name |
+| `TK_EMBEDDING_URL` | `https://api.openai.com/v1` | Base URL for any OpenAI-compatible embedding API |
+| `TK_ADMIN_TOKEN` | — | Bearer token for admin endpoints; unset = disabled |
 
 ## Related work
 
@@ -163,8 +169,9 @@ docker-compose.yml           One-command PG + pgvector
 | [HolmesGPT](https://github.com/HolmesGPT/holmesgpt) | Agent investigates incidents using runbooks | Runbooks are static; no shared knowledge that grows |
 | [Graphiti](https://github.com/getzep/graphiti) | Temporal knowledge graph with provenance, MCP server | General memory; no evidence gate on writes |
 | [Cognee](https://github.com/topoteretes/cognee) | Graph + vector memory, distills sessions into long-term memory | General memory layer; no local-execution / evidence model |
-| [Mem0](https://github.com/mem0ai/mem0) | Persistent memory for agents | Per-user scopes; add-only rather than evidence-based updates |
-| [ACE](https://arxiv.org/abs/2510.04618), [ExpeL](https://github.com/LeapLabTHU/ExpeL) | Context / insights that evolve from experience | Single agent on benchmarks, not a team |
+| [Mem0](https://github.com/mem0ai/mem0) | Long-term memory for agents; adds, updates and deletes memories | Scoped per user or agent; an LLM decides updates, with no evidence requirement |
+| [ACE](https://arxiv.org/abs/2510.04618) | Context as an evolving playbook (generate → reflect → curate) | One agent system; lessons enter without a per-write evidence check; no separate rule layer |
+| [ExpeL](https://github.com/LeapLabTHU/ExpeL), [Reflexion](https://arxiv.org/abs/2303.11366) | Insights / reflections that improve later attempts | Single agent, not shared by a team |
 
 What seems uncommon here is the combination: **one skill shared by a team, tools executed locally with each user's own credentials, and writes gated by in-session evidence.**
 

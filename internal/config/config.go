@@ -5,23 +5,34 @@ import "os"
 type Config struct {
 	Port            string
 	DatabaseURL     string
-	EmbeddingDriver string // dashscope, openai
+	EmbeddingDriver string // openai, dashscope, or empty for no vector search
 	EmbeddingAPIKey string
 	EmbeddingModel  string
+	EmbeddingURL    string // OpenAI-compatible base URL
 	EmbeddingDim    int
+	AdminToken      string // required for admin endpoints; empty disables them
 }
 
 func Load() *Config {
 	c := &Config{
 		Port:            envOr("TK_PORT", "8080"),
 		DatabaseURL:     envOr("TK_DATABASE_URL", "postgres://tk:tk_dev@localhost:5433/tribal_knowledge?sslmode=disable"),
-		EmbeddingDriver: envOr("TK_EMBEDDING_DRIVER", "openai"),
+		EmbeddingDriver: os.Getenv("TK_EMBEDDING_DRIVER"),
 		EmbeddingAPIKey: os.Getenv("TK_EMBEDDING_API_KEY"),
-		EmbeddingModel:  envOr("TK_EMBEDDING_MODEL", "text-embedding-3-small"),
+		EmbeddingModel:  os.Getenv("TK_EMBEDDING_MODEL"),
+		EmbeddingURL:    os.Getenv("TK_EMBEDDING_URL"),
 		EmbeddingDim:    1536,
+		AdminToken:      os.Getenv("TK_ADMIN_TOKEN"),
 	}
-	if c.EmbeddingDriver == "dashscope" && c.EmbeddingModel == "text-embedding-3-small" {
-		c.EmbeddingModel = "text-embedding-v3"
+	switch c.EmbeddingDriver {
+	case "openai":
+		if c.EmbeddingModel == "" {
+			c.EmbeddingModel = "text-embedding-3-small"
+		}
+	case "dashscope":
+		if c.EmbeddingModel == "" {
+			c.EmbeddingModel = "text-embedding-v3"
+		}
 		c.EmbeddingDim = 1024
 	}
 	return c

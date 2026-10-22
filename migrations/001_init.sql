@@ -53,7 +53,7 @@ CREATE TABLE tk_items (
     status      TEXT NOT NULL DEFAULT 'active',  -- active, invalid, superseded
     load_when   TEXT NOT NULL DEFAULT 'relevant', -- always, relevant
     sort_order  INT NOT NULL DEFAULT 0,
-    embedding   vector(1536),
+    embedding   vector,                       -- dimension follows the configured embedder
     ts_content  tsvector,
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -63,8 +63,9 @@ CREATE INDEX idx_tk_items_type     ON tk_items (item_type) WHERE status = 'activ
 CREATE INDEX idx_tk_items_tags     ON tk_items USING gin (tags);
 CREATE INDEX idx_tk_items_nodes    ON tk_items USING gin (node_ids);
 CREATE INDEX idx_tk_items_ts       ON tk_items USING gin (ts_content);
--- ivfflat index requires data; create after initial seed
--- CREATE INDEX idx_tk_items_embedding ON tk_items USING ivfflat (embedding vector_cosine_ops) WITH (lists = 50);
+-- An ANN index needs a fixed dimension. Once you settle on an embedder, e.g. for 1536 dimensions:
+--   ALTER TABLE tk_items ALTER COLUMN embedding TYPE vector(1536);
+--   CREATE INDEX idx_tk_items_embedding ON tk_items USING hnsw (embedding vector_cosine_ops);
 CREATE INDEX idx_tk_items_attrs    ON tk_items USING gin (attributes);
 
 -- ============================================================
@@ -137,10 +138,10 @@ CREATE TABLE tk_updates (
     id              BIGSERIAL PRIMARY KEY,
     session_id      BIGINT NOT NULL REFERENCES tk_sessions(id),
     update_id       TEXT NOT NULL DEFAULT '',   -- client idempotency key
-    feedback        JSONB NOT NULL DEFAULT '[]',
-    reflection      JSONB NOT NULL DEFAULT '{}',
-    operations      JSONB NOT NULL DEFAULT '[]',
-    results         JSONB NOT NULL DEFAULT '[]',
+    feedback        JSONB NOT NULL DEFAULT '[]',   -- array
+    reflection      JSONB NOT NULL DEFAULT '{}',   -- object
+    operations      JSONB NOT NULL DEFAULT '[]',   -- array
+    results         JSONB NOT NULL DEFAULT '[]',   -- array, replayed for a repeated update_id
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 

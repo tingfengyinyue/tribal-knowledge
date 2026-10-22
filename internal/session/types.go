@@ -3,10 +3,10 @@ package session
 // ---- Open ----
 
 type OpenInput struct {
-	Question  string      `json:"question"`
-	RequestID string      `json:"request_id,omitempty"`
-	Client    ClientInfo  `json:"client"`
-	MaxItems  int         `json:"max_items,omitempty"`
+	Question  string     `json:"question"`
+	RequestID string     `json:"request_id,omitempty"`
+	Client    ClientInfo `json:"client"`
+	MaxItems  int        `json:"max_items,omitempty"`
 }
 
 type ClientInfo struct {
@@ -36,10 +36,10 @@ type InstructionItem struct {
 }
 
 type ParsedQuestion struct {
-	Services    []ServiceRef          `json:"services"`
-	Env         string                `json:"env"`
-	Identifiers map[string][]string   `json:"identifiers"`
-	ErrorCodes  []string              `json:"error_codes"`
+	Services    []ServiceRef        `json:"services"`
+	Env         string              `json:"env"`
+	Identifiers map[string][]string `json:"identifiers"`
+	ErrorCodes  []string            `json:"error_codes"`
 }
 
 type ServiceRef struct {
@@ -53,11 +53,11 @@ type GraphView struct {
 }
 
 type NodeView struct {
-	ID       int64             `json:"id"`
-	NodeKey  string            `json:"node_key"`
-	Name     string            `json:"name"`
-	NodeType string            `json:"node_type"`
-	Attrs    map[string]any    `json:"attributes,omitempty"`
+	ID       int64          `json:"id"`
+	NodeKey  string         `json:"node_key"`
+	Name     string         `json:"name"`
+	NodeType string         `json:"node_type"`
+	Attrs    map[string]any `json:"attributes,omitempty"`
 }
 
 type EdgeView struct {
@@ -112,17 +112,17 @@ type CloseWarning struct {
 // ---- LogStep ----
 
 type LogStepInput struct {
-	SessionID   int64              `json:"session_id"`
-	Seq         int                `json:"seq"`
-	StepType    string             `json:"step_type"`
-	Tool        string             `json:"tool"`
-	Command     string             `json:"command"`
-	Resource    *ResourceRef       `json:"resource,omitempty"`
-	ResultClass string             `json:"result_class"`
-	Rows        int                `json:"rows"`
-	Summary     string             `json:"summary"`
+	SessionID   int64               `json:"session_id"`
+	Seq         int                 `json:"seq"`
+	StepType    string              `json:"step_type"`
+	Tool        string              `json:"tool"`
+	Command     string              `json:"command"`
+	Resource    *ResourceRef        `json:"resource,omitempty"`
+	ResultClass string              `json:"result_class"`
+	Rows        int                 `json:"rows"`
+	Summary     string              `json:"summary"`
 	IDsFound    map[string][]string `json:"ids_found"`
-	UsedItemIDs []int64            `json:"used_item_ids"`
+	UsedItemIDs []int64             `json:"used_item_ids"`
 }
 
 type ResourceRef struct {
@@ -136,12 +136,12 @@ type LogStepOutput struct {
 // ---- Update ----
 
 type UpdateInput struct {
-	SessionID    int64        `json:"session_id"`
-	UpdateID     string       `json:"update_id"`
+	SessionID     int64       `json:"session_id"`
+	UpdateID      string      `json:"update_id"`
 	UserConfirmed bool        `json:"user_confirmed"`
-	Feedback     []Feedback   `json:"feedback"`
-	Reflection   *Reflection  `json:"reflection"`
-	Operations   []Operation  `json:"operations"`
+	Feedback      []Feedback  `json:"feedback"`
+	Reflection    *Reflection `json:"reflection"`
+	Operations    []Operation `json:"operations"`
 }
 
 type Feedback struct {
@@ -157,22 +157,22 @@ type Reflection struct {
 }
 
 type Operation struct {
-	Op            string   `json:"op"`
-	ItemType      string   `json:"item_type,omitempty"`
-	Title         string   `json:"title,omitempty"`
-	Content       string   `json:"content,omitempty"`
-	Tags          []string `json:"tags,omitempty"`
-	ItemID        int64    `json:"item_id,omitempty"`
-	SourceNodeKey string   `json:"source_node_key,omitempty"`
-	TargetNodeKey string   `json:"target_node_key,omitempty"`
-	EdgeType      string   `json:"edge_type,omitempty"`
-	NodeKey       string   `json:"node_key,omitempty"`
-	NodeType      string   `json:"node_type,omitempty"`
-	Name          string   `json:"name,omitempty"`
-	Attributes    map[string]any `json:"attributes,omitempty"`
-	EvidenceSteps []int    `json:"evidence_steps,omitempty"`
-	OnSimilar     string   `json:"on_similar,omitempty"`
-	MergeInto     int64    `json:"merge_into,omitempty"`
+	Op            string            `json:"op"`
+	ItemType      string            `json:"item_type,omitempty"`
+	Title         string            `json:"title,omitempty"`
+	Content       string            `json:"content,omitempty"`
+	Tags          []string          `json:"tags,omitempty"`
+	ItemID        int64             `json:"item_id,omitempty"`
+	SourceNodeKey string            `json:"source_node_key,omitempty"`
+	TargetNodeKey string            `json:"target_node_key,omitempty"`
+	EdgeType      string            `json:"edge_type,omitempty"`
+	NodeKey       string            `json:"node_key,omitempty"`
+	NodeType      string            `json:"node_type,omitempty"`
+	Name          string            `json:"name,omitempty"`
+	Attributes    map[string]any    `json:"attributes,omitempty"`
+	EvidenceSteps []int             `json:"evidence_steps,omitempty"`
+	OnSimilar     string            `json:"on_similar,omitempty"`
+	MergeInto     int64             `json:"merge_into,omitempty"`
 	Repo          *RepoRegistration `json:"repo,omitempty"`
 }
 

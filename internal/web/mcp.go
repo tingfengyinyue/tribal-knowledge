@@ -11,7 +11,7 @@ type mcpWriter struct {
 	w http.ResponseWriter
 }
 
-func (m *mcpWriter) Header() http.Header        { return m.w.Header() }
+func (m *mcpWriter) Header() http.Header         { return m.w.Header() }
 func (m *mcpWriter) Write(b []byte) (int, error) { return m.w.Write(b) }
 func (m *mcpWriter) WriteHeader(statusCode int)  { m.w.WriteHeader(statusCode) }
 func (m *mcpWriter) Flush()                      {}

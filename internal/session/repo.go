@@ -55,12 +55,9 @@ func (svc *Service) repoContext(ctx context.Context, repo string) *RepoContext {
 	}
 }
 
-func (svc *Service) registerRepo(ctx context.Context, sess *model.Session, steps []model.Step, hasEvidence bool, op Operation) OpResult {
+func (svc *Service) registerRepo(ctx context.Context, op Operation) OpResult {
 	if op.Repo == nil {
 		return OpResult{Op: op.Op, Status: "invalid", Message: "repo field is required"}
-	}
-	if !hasEvidence {
-		return needsEvidenceResult(op.Op, "register_repo")
 	}
 
 	repo := normalizeRepo(op.Repo.GitRemote)

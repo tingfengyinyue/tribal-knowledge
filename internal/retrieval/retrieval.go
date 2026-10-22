@@ -72,6 +72,9 @@ func (r *Retriever) Search(ctx context.Context, query string, tags []string, ite
 	ranked := make([]RankedItem, 0, len(results))
 	for _, sr := range results {
 		score := weightTag*sr.TagScore + weightVec*sr.VecScore + weightText*sr.TextScore
+		if score <= 0 {
+			continue // matched nothing; the DB still returns rows up to LIMIT
+		}
 		score *= float64(sr.Item.Trust)
 
 		var lastVerified string

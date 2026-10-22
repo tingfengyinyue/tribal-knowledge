@@ -101,25 +101,32 @@ The concept draws from several lines of research:
 
 **Experiential learning for agents.** [ExpeL](https://arxiv.org/abs/2308.10144) (Zhao et al., AAAI 2024) showed that LLM agents can learn from experience without fine-tuning: the agent attempts tasks, reflects on successes and failures, extracts reusable insights, and applies them to future tasks. ExpeL's insight pool is the closest ancestor of our `experience` notes — lessons written by the agent, indexed for future retrieval, with the critical difference that ExpeL's insights are *per-agent* and *self-assessed*.
 
-**Lifelong skill accumulation.** [Voyager](https://arxiv.org/abs/2305.16291) (Wang et al., NeurIPS 2023) demonstrated a different form of self-evolving knowledge: a skill library that grows as the agent explores, where each skill is an executable program verified by the environment. Voyager's key principle — *the environment verifies, not the agent* — maps directly to our evidence gate: the server, not the agent, decides what is allowed in.
+**Lifelong skill accumulation.** [Voyager](https://arxiv.org/abs/2305.16291) (Wang et al., 2023) demonstrated a different form of self-evolving knowledge: a skill library that grows as the agent explores, where each skill is an executable program checked against environment feedback and self-verification. Voyager's key principle — *the environment verifies, not the agent's say-so* — maps directly to our evidence gate: the server, not the agent, decides what is allowed in.
 
-**Context that accumulates across sessions.** [ACE](https://arxiv.org/abs/2510.04618) (Accumulative Context Engineering) formalized the idea that the context an agent operates in should not start from scratch every time, but should accumulate useful knowledge across interactions. This is exactly what `skill_open` does: every new question starts with the context of everything the team has learned before.
+**Evolving contexts.** [ACE](https://arxiv.org/abs/2510.04618) (Agentic Context Engineering; Zhang et al., ICLR 2026) treats an agent's context as an evolving *playbook*: a generator works on tasks, a reflector extracts lessons from execution feedback, and a curator merges them into the playbook as small incremental updates instead of rewriting it. It is the closest prior work to Loop 2, and to what `skill_open` delivers: every question starts from an accumulated playbook rather than from scratch.
 
-**Reflective memory.** [RAISE](https://arxiv.org/abs/2401.02009) (Reflective Agent with Self-Evolving Knowledge Base) combined a self-evolving knowledge base with reflective memory, where the agent's reflections feed back into long-term storage. Our design follows the same pattern: the `reflection` field in `skill_update` captures what went well, what didn't, and what to try next time — and this becomes part of the knowledge base.
+**Reflective memory.** [Reflexion](https://arxiv.org/abs/2303.11366) (Shinn et al., 2023) showed that agents improve across attempts by writing verbal self-reflections into memory and reading them on the next try. The `reflection` field in `skill_update` plays the same role. The difference is that reflections here are kept apart from facts: they shape how agents work, but they are never served to other people as verified knowledge.
 
-**Collective intelligence.** The multi-agent research community (CoELA, CoALA, and the emerging agent framework ecosystem) has converged on shared persistent memory as the key to collective intelligence: agents contribute to and draw from a common pool, so knowledge compounds across the team rather than staying siloed with individuals.
+**Memory as an architecture.** [CoALA](https://arxiv.org/abs/2309.02427) (Sumers et al., 2023) gives a vocabulary we borrow: short-term working memory plus long-term episodic, semantic and procedural memory. In those terms, `case` notes are episodic memory; `experience` and `document` notes and the map are semantic memory; `instruction` notes are procedural memory — the layer that Loop 3 changes.
 
 ### What's different here
 
-These works share a common aspiration — agents that learn from experience — but each operates on one layer:
+These works share a common aspiration — agents that learn from experience — but each covers only part of the picture:
 
-| Approach | Loop 1 (data) | Loop 2 (strategy) | Loop 3 (rules) | Team shared |
+| Approach | Loop 1 (facts) | Loop 2 (strategy) | Loop 3 (rules) | Shared by a team |
 |---|---|---|---|---|
-| **ExpeL** | ✅ insights from experience | ✅ reflection | ❌ no live rule updates | ❌ single agent |
-| **Voyager** | ✅ skill library grows | ❌ no reflection | ❌ no live rule updates | ❌ single agent |
-| **Graphiti / Mem0 / Cognee** | ✅ persistent memory | ❌ | ❌ | ⚠️ per-user |
-| **RAISE** | ✅ self-evolving KB | ✅ reflective memory | ❌ | ❌ single agent |
-| **This project** | ✅ evidence-gated | ✅ reflections → experiences | ✅ instructions evolve live | ✅ whole team |
+| **ExpeL** | ✅ experiences and insights | ✅ insights from successes and failures | ❌ insights act like rules, but belong to one agent | ❌ |
+| **Voyager** | ✅ library of verified skills | ⚠️ self-verification within a task | ❌ | ❌ |
+| **Reflexion** | ❌ memory is per task | ✅ verbal self-reflection | ❌ | ❌ |
+| **ACE** | ✅ playbook entries | ✅ reflector + curator | ⚠️ the playbook is an evolving rule set, but there is no separate, owner-controlled rule layer | ❌ |
+| **Mem0 / Graphiti / Cognee** | ✅ long-term memory (Mem0 adds, updates and deletes memories) | ❌ | ❌ | ⚠️ scoped per user or agent |
+| **This project** | ✅ evidence-gated | ✅ reflections → experiences | ✅ instructions edited by owners, applied live | ✅ |
+
+The closest is ACE. The differences are about who shares the context and who decides what enters it:
+
+- **Many users, one skill.** ACE improves one agent system. Here one playbook serves a whole team, and each person's agent runs tools with their own credentials on their own machine.
+- **The server checks every write.** In ACE, lessons from the reflector go into the playbook. Here a fact can only enter if it cites a step from the same session that observed something real. The check is deterministic and runs on the server, not in a model.
+- **Rules are a separate, owned layer.** Agents write notes; only owners change instructions. Agent-written content cannot rewrite the rules that every agent follows.
 
 The combination: **all three loops, shared across a team, with the server — not the agent — enforcing quality.**
 
@@ -240,7 +247,7 @@ The map answers *"where do I look?"*. Every map change requires evidence (see §
 
 | Type | Example |
 |---|---|
-| `experience` | "Checkout timeouts: check the wallet service's connection pool before the gateway." Has a short *brief* and a fuller body. |
+| `experience` | "Checkout timeouts: check the wallet service's connection pool before the payment provider." Has a short *brief* and a fuller body. |
 | `document` | A section of a guide, split by heading. |
 | `case` | A past session saved as a case: abstract, conclusion, services and resources involved. |
 | `instruction` | Rules the agent must follow, loaded by condition (`always`, or only for a given domain). Admin-only. |
@@ -392,7 +399,7 @@ An agent without permission to read the relevant logs matched the problem to an 
 Past cases are great leads and terrible proof. If they're allowed to justify writes, a single wrong case reinforces itself every time it is recalled.
 
 **Generic aliases poison recognition.**
-Aliases like `scheduler` or `gateway` matched unrelated questions. Names and aliases must be specific; generic words are rejected.
+Aliases like `api` or `web` matched unrelated questions. Names and aliases must be specific; generic words are rejected.
 
 **Keep the metadata when importing.**
 The original per-person notes recorded when a fact became true, when it was observed and which note superseded which. A first import kept the text and dropped most of that, and even treated "partially superseded" as "invalid", silently hiding a still-useful note. Time and provenance fields are part of the knowledge, not decoration.

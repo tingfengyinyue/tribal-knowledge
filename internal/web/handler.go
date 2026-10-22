@@ -1,8 +1,10 @@
 package web
 
 import (
+	"crypto/subtle"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/tingfengyinyue/tribal-knowledge/internal/bootstrap"
@@ -11,12 +13,27 @@ import (
 )
 
 type Handler struct {
-	svc   *session.Service
-	store *store.Store
+	svc        *session.Service
+	store      *store.Store
+	adminToken string
 }
 
-func NewHandler(svc *session.Service, st *store.Store) *Handler {
-	return &Handler{svc: svc, store: st}
+func NewHandler(svc *session.Service, st *store.Store, adminToken string) *Handler {
+	return &Handler{svc: svc, store: st, adminToken: adminToken}
+}
+
+// requireAdmin checks "Authorization: Bearer <TK_ADMIN_TOKEN>". With no token configured, admin endpoints are off.
+func (h *Handler) requireAdmin(c *gin.Context) {
+	if h.adminToken == "" {
+		c.AbortWithStatusJSON(http.StatusForbidden, errResp("FORBIDDEN", "admin endpoints are disabled; set TK_ADMIN_TOKEN to enable them"))
+		return
+	}
+	got := strings.TrimPrefix(c.GetHeader("Authorization"), "Bearer ")
+	if subtle.ConstantTimeCompare([]byte(got), []byte(h.adminToken)) != 1 {
+		c.AbortWithStatusJSON(http.StatusUnauthorized, errResp("UNAUTHENTICATED", "admin token required"))
+		return
+	}
+	c.Next()
 }
 
 func (h *Handler) RegisterRoutes(r *gin.Engine) {
@@ -29,8 +46,7 @@ func (h *Handler) RegisterRoutes(r *gin.Engine) {
 		api.POST("/sessions/:id/updates", h.updateSession)
 		api.GET("/bootstrap", h.getBootstrap)
 
-		// Admin
-		api.POST("/admin/sessions/:id/revert", h.revertSession)
+		api.POST("/admin/sessions/:id/revert", h.requireAdmin, h.revertSession)
 	}
 
 	r.GET("/health", func(c *gin.Context) {

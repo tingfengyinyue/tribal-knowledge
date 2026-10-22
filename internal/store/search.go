@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/pgvector/pgvector-go"
@@ -74,8 +75,7 @@ func (s *Store) Search(ctx context.Context, p SearchParams) ([]SearchResult, err
 
 	// Full-text score expression
 	textExpr := "0::float"
-	if p.Query != "" {
-		tsQuery := strings.Join(strings.Fields(p.Query), " | ")
+	if tsQuery := orTSQuery(p.Query); tsQuery != "" {
 		textExpr = fmt.Sprintf("ts_rank(ts_content, to_tsquery('simple', %s))", nextArg(tsQuery))
 	}
 
@@ -100,6 +100,28 @@ func (s *Store) Search(ctx context.Context, p SearchParams) ([]SearchResult, err
 		return nil, fmt.Errorf("search: %w", err)
 	}
 	return results, nil
+}
+
+var tsToken = regexp.MustCompile(`[\p{L}\p{N}_]+`)
+
+const maxTSTokens = 32
+
+// orTSQuery turns free text into "a | b | c". Only letters, digits and underscores
+// survive, so punctuation in a question (":", "&", "(") can't break to_tsquery.
+func orTSQuery(q string) string {
+	seen := map[string]bool{}
+	var toks []string
+	for _, t := range tsToken.FindAllString(strings.ToLower(q), -1) {
+		if seen[t] {
+			continue
+		}
+		seen[t] = true
+		toks = append(toks, t)
+		if len(toks) == maxTSTokens {
+			break
+		}
+	}
+	return strings.Join(toks, " | ")
 }
 
 func pgTextArrayLiteral(ss []string) string {

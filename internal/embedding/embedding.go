@@ -154,18 +154,3 @@ func (e *dashscopeEmbedder) Embed(ctx context.Context, texts []string) ([][]floa
 	}
 	return vecs, nil
 }
-
-// Noop embedder for development without an API key.
-type noopEmbedder struct{ dim int }
-
-func NewNoop(dim int) Embedder { return &noopEmbedder{dim: dim} }
-
-func (e *noopEmbedder) Dim() int { return e.dim }
-
-func (e *noopEmbedder) Embed(_ context.Context, texts []string) ([][]float32, error) {
-	vecs := make([][]float32, len(texts))
-	for i := range texts {
-		vecs[i] = make([]float32, e.dim)
-	}
-	return vecs, nil
-}

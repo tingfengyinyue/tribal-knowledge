@@ -14,7 +14,7 @@
 
 - "那个日志库只给 `message` 字段建了索引，别用 `level` 过滤。"
 - "那个地区的订单在另一个数据库里。"
-- "报错 E4021 的话，问题在钱包服务，不在支付网关。"
+- "报错 E4021 的话，问题在钱包服务，不在支付服务商。"
 
 现在的 coding agent 已经能自己动手排查问题，但每个 agent 都从零开始。昨天一个同事的 agent 踩过的坑，今天另一个同事的 agent 还会再踩一遍。
 
@@ -111,14 +111,16 @@ flowchart LR
 
 ## 快速启动
 
+需要 Go 1.23+ 和 Docker。
+
 ```bash
-# 1. 启动 PostgreSQL + pgvector
+# 1. 启动 PostgreSQL + pgvector（端口 5433，会自动建表）
 docker compose up -d
 
-# 2. 设置 embedding API key（OpenAI 兼容接口或 DashScope）
+# 2. 可选：开启向量检索（OpenAI 兼容接口或 DashScope）。
+#    不开启时，笔记通过标签和全文检索召回。
 export TK_EMBEDDING_DRIVER=openai          # 或 "dashscope"
 export TK_EMBEDDING_API_KEY=sk-...
-export TK_EMBEDDING_MODEL=text-embedding-3-small
 
 # 3. 启动服务
 make run
@@ -127,6 +129,8 @@ make run
 # 4. 连接你的 agent
 # Claude Code: claude mcp add tribal-knowledge --transport http http://localhost:8080/mcp
 ```
+
+> **安全提示**：参考实现目前还没有用户认证，请在可信的网络中运行。管理员接口（按会话撤销）需要设置 `TK_ADMIN_TOKEN`，不设置时这些接口直接关闭。
 
 ### 项目结构
 
@@ -139,7 +143,7 @@ internal/
   retrieval/                 三路检索（标签 + 向量 + 全文），过期惩罚
   mcpserver/                 MCP Streamable HTTP — 8 个工具
   bootstrap/                 内嵌的引导文件，版本自更新
-  embedding/                 可插拔 embedder：OpenAI 兼容、DashScope、noop
+  embedding/                 可插拔 embedder：OpenAI 兼容、DashScope
   web/                       REST API handlers，MCP HTTP 封装
   config/                    基于环境变量的配置
 migrations/                  PostgreSQL 建表
@@ -151,10 +155,12 @@ docker-compose.yml           一键启动 PG + pgvector
 | 变量 | 默认值 | 说明 |
 |---|---|---|
 | `TK_PORT` | `8080` | 服务端口 |
-| `TK_DATABASE_URL` | `postgres://tk:tk_dev@localhost:5432/tribal_knowledge?sslmode=disable` | PostgreSQL 连接串 |
-| `TK_EMBEDDING_DRIVER` | `openai` | `openai`、`dashscope` 或留空（noop） |
+| `TK_DATABASE_URL` | `postgres://tk:tk_dev@localhost:5433/tribal_knowledge?sslmode=disable` | PostgreSQL 连接串 |
+| `TK_EMBEDDING_DRIVER` | 空 | `openai`、`dashscope`，或留空（不做向量检索） |
 | `TK_EMBEDDING_API_KEY` | — | embedding 服务的 API key |
-| `TK_EMBEDDING_MODEL` | `text-embedding-3-small` | embedding 模型名 |
+| `TK_EMBEDDING_MODEL` | `text-embedding-3-small` / `text-embedding-v3` | embedding 模型名 |
+| `TK_EMBEDDING_URL` | `https://api.openai.com/v1` | 任意 OpenAI 兼容 embedding 接口的地址 |
+| `TK_ADMIN_TOKEN` | — | 管理员接口的 Bearer token；不设置则关闭 |
 
 ## 相关项目
 
@@ -163,8 +169,9 @@ docker-compose.yml           一键启动 PG + pgvector
 | [HolmesGPT](https://github.com/HolmesGPT/holmesgpt) | agent 按 runbook 排查故障 | runbook 是静态的，没有会成长的共享知识 |
 | [Graphiti](https://github.com/getzep/graphiti) | 带来源追溯的时序知识图谱，有 MCP 服务器 | 通用记忆，写入没有证据门禁 |
 | [Cognee](https://github.com/topoteretes/cognee) | 图谱 + 向量记忆，把会话沉淀为长期记忆 | 通用记忆层，没有本地执行和证据模型 |
-| [Mem0](https://github.com/mem0ai/mem0) | agent 的持久记忆 | 按用户划分范围；只新增，不按证据更新 |
-| [ACE](https://arxiv.org/abs/2510.04618)、[ExpeL](https://github.com/LeapLabTHU/ExpeL) | 从经验中演进的上下文 / 经验库 | 单个 agent 在基准测试上运行，不是团队共用 |
+| [Mem0](https://github.com/mem0ai/mem0) | agent 的长期记忆；支持新增、更新、删除记忆 | 按用户或 agent 划分范围；由 LLM 决定如何更新，不要求证据 |
+| [ACE](https://arxiv.org/abs/2510.04618) | 把上下文当成不断进化的操作手册（生成 → 反思 → 整理） | 一个 agent 系统；教训写入时没有逐条的证据检查；没有单独的规则层 |
+| [ExpeL](https://github.com/LeapLabTHU/ExpeL)、[Reflexion](https://arxiv.org/abs/2303.11366) | 能改进后续尝试的洞察 / 反思 | 单个 agent，不是团队共用 |
 
 这里比较少见的是这个组合：**团队共用一个 Skill，每个人用自己的凭证在本地执行工具，写入要有本次会话的证据。**
 

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/tingfengyinyue/tribal-knowledge/internal/bootstrap"
+	"github.com/tingfengyinyue/tribal-knowledge/internal/embedding"
 	"github.com/tingfengyinyue/tribal-knowledge/internal/model"
 	"github.com/tingfengyinyue/tribal-knowledge/internal/retrieval"
 	"github.com/tingfengyinyue/tribal-knowledge/internal/store"
@@ -15,11 +16,12 @@ import (
 type Service struct {
 	store     *store.Store
 	retriever *retrieval.Retriever
+	embedder  embedding.Embedder // nil: no vector search
 	now       func() time.Time
 }
 
-func NewService(s *store.Store, r *retrieval.Retriever) *Service {
-	return &Service{store: s, retriever: r, now: time.Now}
+func NewService(s *store.Store, r *retrieval.Retriever, e embedding.Embedder) *Service {
+	return &Service{store: s, retriever: r, embedder: e, now: time.Now}
 }
 
 // Open creates a new session, retrieves relevant knowledge, and returns the initial context.
@@ -238,21 +240,6 @@ func (svc *Service) SearchItems(ctx context.Context, query string, maxItems int)
 		}
 	}
 	return items, nil
-}
-
-// hasQueryEvidence checks if any step in the session has a result class that counts as evidence.
-func hasQueryEvidence(steps []model.Step) bool {
-	evidenceClasses := map[string]bool{
-		"ok":            true,
-		"no_data":       true,
-		"wrong_mapping": true,
-	}
-	for _, s := range steps {
-		if s.StepType == "query" && evidenceClasses[s.ResultClass] {
-			return true
-		}
-	}
-	return false
 }
 
 func extractTags(question string) []string {
